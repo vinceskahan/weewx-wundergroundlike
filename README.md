@@ -27,13 +27,18 @@ You need this extension.  See below for how to install and configure.
 * restart weewx
 * check your syslogs to make sure things are working
 
-
 ### Example installation
 
 ````
-
-
+# weectl extension install https://github.com/vinceskahan/weewx-wundergroundlike/archive/refs/heads/main.zip
+# weectl extension list
+Using configuration file /Users/vince/weewx-data/weewx.conf
+Extension Name    Version   Description
+wundergroundLike  0.1       Post to a custom server_url that uses Weather Underground formatting
 ````
+
+### To Uninstall
+Again, use the extension installer. For weewx v5 `weectl extension uninstall wundergroundLike`
 
 ### Credits
 This extension is derived (with thanks) from restx.py in weewx 5.2.0 with the
