@@ -22,7 +22,7 @@ You need this extension.  See below for how to install and configure.
 * if you are running a pip install, activate your venv first
 * use the weewx extension installer to install this extension
    * For weewx v5 users - see [weectl](https://www.weewx.com/docs/5.2/utilities/weectl-extension/) for detailed instructions
-   * For weewx v4 users - see [wee_extension](hhttps://www.weewx.com/docs/4.10/utilities.htm#wee_extension_utility) for detailed instructions
+   * For weewx v4 users - see [wee_extension](https://www.weewx.com/docs/4.10/utilities.htm\#wee_extension_utility) for detailed instructions
 * edit the WundergroundLike stanza in weewx.conf to set your parameters
 * restart weewx
 * check your syslogs to make sure things are working
