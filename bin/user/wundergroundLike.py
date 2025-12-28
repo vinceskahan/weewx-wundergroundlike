@@ -13,52 +13,16 @@
 #
 #-------------------------------------------------------------
 
-import datetime
-import http.client
 import logging
-import platform
 import queue
-import random
-import re
-import socket
-import ssl
-import sys
-import threading
-import time
-import urllib.error
-import urllib.parse
-import urllib.request
 
-import weedb
-import weeutil.logger
-import weeutil.weeutil
 import weewx.engine
 import weewx.manager
-import weewx.units
-from weeutil.config import search_up, accumulateLeaves
-from weeutil.weeutil import to_int, to_float, to_bool, timestamp_to_string, to_sorted_string
+import weewx.restx
+from weeutil.config import search_up
+from weeutil.weeutil import to_bool, to_sorted_string
 
 log = logging.getLogger(__name__)
-
-
-class FailedPost(Exception):
-    """Raised when a post fails, and is unlikely to succeed if retried."""
-
-
-class AbortedPost(Exception):
-    """Raised when a post is aborted by the client."""
-
-
-class BadLogin(Exception):
-    """Raised when login information is bad or missing."""
-
-
-class ConnectError(IOError):
-    """Raised when unable to get a socket connection."""
-
-
-class SendError(IOError):
-    """Raised when unable to send through a socket."""
 
 #------------------------------------------------------
 #         custom WundergroundLike uploader
@@ -73,7 +37,7 @@ class WundergroundLike(weewx.restx.StdWunderground):
 
        Differences from the weewx Wunderground class:
          - set default URLs to bogus values
-         - supersede pws_url with mandatory'server_url' from [[WundergroundLike]] 
+         - supersede pws_url with mandatory 'server_url' from [[WundergroundLike]] 
          - explicitly point to weewx.restx.foo for a few items
          - slightly different logging output to reflect this class's name
          - slightly different/added logging 
@@ -92,20 +56,23 @@ class WundergroundLike(weewx.restx.StdWunderground):
         _ambient_dict = weewx.restx.get_site_dict(
             config_dict, 'WundergroundLike', 'station', 'password', 'server_url')
         if _ambient_dict is None:
+            log.error("WundergroundLike: Missing required configuration. "
+                      "Please ensure [StdRESTful][[WundergroundLike]] is properly configured "
+                      "with 'station', 'password', and 'server_url' in weewx.conf")
             return
-        else:
-            log.info("_ambient_dict: ", _ambient_dict)
+
+        log.info("WundergroundLike: Configuration loaded: %s", _ambient_dict)
 
         # force rapidfire false
         _ambient_dict['rapidfire'] = False
 
         # supersede default pws_url used in WU with server_url from weewx.conf
-        pws_url = _ambient_dict['server_url']
-        log.debug("WundergroundLike server_url: %s", pws_url)
+        # server_url is already in _ambient_dict from get_site_dict
+        log.debug("WundergroundLike server_url: %s", _ambient_dict.get('server_url'))
 
-        _essentials_dict = search_up(config_dict['StdRESTful']['Wunderground'], 'Essentials', {})
+        _essentials_dict = search_up(config_dict['StdRESTful']['WundergroundLike'], 'Essentials', {})
 
-        log.debug("WU essentials: %s", _essentials_dict)
+        log.debug("WundergroundLike essentials: %s", _essentials_dict)
 
         # Get the manager dictionary:
         _manager_dict = weewx.manager.get_manager_dict_from_config(
@@ -117,7 +84,7 @@ class WundergroundLike(weewx.restx.StdWunderground):
         do_archive_post = to_bool(_ambient_dict.pop('archive_post',
                                                     not do_rapidfire_post))
         if do_archive_post:
-            _ambient_dict.setdefault('server_url', WundergroundLike.pws_url)
+            # Don't use setdefault - server_url is already set from config
             self.archive_queue = queue.Queue()
             self.archive_thread = weewx.restx.AmbientThread(
                 self.archive_queue,
@@ -128,27 +95,27 @@ class WundergroundLike(weewx.restx.StdWunderground):
             self.archive_thread.start()
             self.bind(weewx.NEW_ARCHIVE_RECORD, self.new_archive_record)
             log.info("WundergroundLike: Data for station %s will be posted",
-                     _ambient_dict['station'])
+                     _ambient_dict.get('station', 'UNKNOWN'))
 
         if do_rapidfire_post:
-            _ambient_dict.setdefault('server_url', weewx.restx.StdWunderground.rf_url)
+            _ambient_dict.setdefault('server_url', WundergroundLike.rf_url)
             _ambient_dict.setdefault('log_success', False)
             _ambient_dict.setdefault('log_failure', False)
             _ambient_dict.setdefault('max_backlog', 0)
             _ambient_dict.setdefault('max_tries', 1)
             _ambient_dict.setdefault('rtfreq', 2.5)
-            self.cached_values = CachedValues()
+            self.cached_values = weewx.restx.CachedValues()
             self.loop_queue = queue.Queue()
             self.loop_thread = weewx.restx.AmbientLoopThread(
                 self.loop_queue,
                 _manager_dict,
-                protocol_name="Wunderground-RF",
+                protocol_name="WundergroundLike-RF",
                 essentials=_essentials_dict,
                 **_ambient_dict)
             self.loop_thread.start()
             self.bind(weewx.NEW_LOOP_PACKET, self.new_loop_packet)
             log.info("WundergroundLike-RF: Data for station %s will be posted",
-                     _ambient_dict['station'])
+                     _ambient_dict.get('station', 'UNKNOWN'))
 
     def new_loop_packet(self, event):
         """Puts new LOOP packets in the loop queue"""
@@ -164,5 +131,3 @@ class WundergroundLike(weewx.restx.StdWunderground):
     def new_archive_record(self, event):
         """Puts new archive records in the archive queue"""
         self.archive_queue.put(event.record)
-
-
