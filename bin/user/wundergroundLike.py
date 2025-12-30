@@ -1,5 +1,7 @@
-#-------------------------------------------------------------
+#-----------------------------------------------------------------
 #         custom WundergroundLike uploader
+#
+#    Copyright (c) 2026 Sigi Meisenbichler <s.meisen@icloud.com>
 #
 #    Copyright (c) 2025 Vince Skahan <vinceskahan@gmail.com>
 #
@@ -11,48 +13,47 @@
 # The upstream code this is based on uses a LICENSE.txt file
 # that is present here for reference.
 #
-#-------------------------------------------------------------
+#-----------------------------------------------------------------
 
 import logging
 import queue
 
-import weewx.engine
-import weewx.manager
 import weewx.restx
 from weeutil.config import search_up
 from weeutil.weeutil import to_bool, to_sorted_string
 
 log = logging.getLogger(__name__)
 
-#------------------------------------------------------
+#-----------------------------------------------------------------
 #         custom WundergroundLike uploader
-#------------------------------------------------------
+#-----------------------------------------------------------------
 
 class WundergroundLike(weewx.restx.StdWunderground):
+    """Custom class to upload data to Weather Underground compatible servers.
 
-    """Customized version of the Ambient protocol for the Weather Underground,
-       intended to support sites that use WU protocols, yet use different URLs
-       for uploading.  Consult weewx's restx.py for commentary on the various defaults
-       and features therein.
+    This class is designed for use with non-WU servers that use a WU-compatible API,
+    such as HetWeerActueel.
 
-       Differences from the weewx Wunderground class:
-         - set default URLs to bogus values
-         - supersede pws_url with mandatory 'server_url' from [[WundergroundLike]] 
-         - explicitly point to weewx.restx.foo for a few items
-         - slightly different logging output to reflect this class's name
-         - slightly different/added logging 
-         - rapidfire is hard-coded to be False
+    Differences from the weewx Wunderground class:
+    - set default URLs to bogus values
+    - supersede pws_url with mandatory 'server_url' from [[WundergroundLike]]
+    - explicitly point to weewx.restx.foo for a few items
+    - slightly different logging output to reflect this class's name
+    - slightly different/added logging
+
+    For additional information, see:
+        https://support.wunderground.com/article/Knowledge/How-do-I-upload-data-from-my-personal-weather-station-to-Weather-Underground
+        http://wiki.wunderground.com/index.php/PWS_-_Upload_Protocol
     """
 
-    # the rapidfire URL:
-    rf_url = "http://localhost/rf_url_undefined"
-    # the personal weather station URL:
-    pws_url = "http://localhost/pws_url_undefined"
+    # bogus URLs to force use of mandatory 'server_url' in weewx.conf
+    pws_url = 'http://please.set.server_url.in.weewx.conf'
+    rf_url = 'http://please.set.server_url.in.weewx.conf'
 
     def __init__(self, engine, config_dict):
+        super(WundergroundLike, self).__init__(engine, config_dict)
 
-        super().__init__(engine, config_dict)
-
+        # this uploader requires 'station', 'password' and 'server_url'
         _ambient_dict = weewx.restx.get_site_dict(
             config_dict, 'WundergroundLike', 'station', 'password', 'server_url')
         if _ambient_dict is None:
@@ -66,13 +67,8 @@ class WundergroundLike(weewx.restx.StdWunderground):
         # force rapidfire false
         _ambient_dict['rapidfire'] = False
 
-        # supersede default pws_url used in WU with server_url from weewx.conf
         # server_url is already in _ambient_dict from get_site_dict
         log.debug("WundergroundLike server_url: %s", _ambient_dict.get('server_url'))
-
-        _essentials_dict = search_up(config_dict['StdRESTful']['WundergroundLike'], 'Essentials', {})
-
-        log.debug("WundergroundLike essentials: %s", _essentials_dict)
 
         # Get the manager dictionary:
         _manager_dict = weewx.manager.get_manager_dict_from_config(
@@ -82,7 +78,7 @@ class WundergroundLike(weewx.restx.StdWunderground):
         # has been specified, but this can be overridden
         do_rapidfire_post = to_bool(_ambient_dict.pop('rapidfire', False))
         do_archive_post = to_bool(_ambient_dict.pop('archive_post',
-                                                    not do_rapidfire_post))
+                                                     not do_rapidfire_post))
         if do_archive_post:
             # Don't use setdefault - server_url is already set from config
             self.archive_queue = queue.Queue()
@@ -90,7 +86,6 @@ class WundergroundLike(weewx.restx.StdWunderground):
                 self.archive_queue,
                 _manager_dict,
                 protocol_name="WundergroundLike",
-                essentials=_essentials_dict,
                 **_ambient_dict)
             self.archive_thread.start()
             self.bind(weewx.NEW_ARCHIVE_RECORD, self.new_archive_record)
@@ -98,7 +93,7 @@ class WundergroundLike(weewx.restx.StdWunderground):
                      _ambient_dict.get('station', 'UNKNOWN'))
 
         if do_rapidfire_post:
-            _ambient_dict.setdefault('server_url', WundergroundLike.rf_url)
+            _ambient_dict.setdefault('server_url', weewx.restx.StdWunderground.rf_url)
             _ambient_dict.setdefault('log_success', False)
             _ambient_dict.setdefault('log_failure', False)
             _ambient_dict.setdefault('max_backlog', 0)
@@ -110,7 +105,6 @@ class WundergroundLike(weewx.restx.StdWunderground):
                 self.loop_queue,
                 _manager_dict,
                 protocol_name="WundergroundLike-RF",
-                essentials=_essentials_dict,
                 **_ambient_dict)
             self.loop_thread.start()
             self.bind(weewx.NEW_LOOP_PACKET, self.new_loop_packet)
@@ -119,14 +113,11 @@ class WundergroundLike(weewx.restx.StdWunderground):
 
     def new_loop_packet(self, event):
         """Puts new LOOP packets in the loop queue"""
-        if weewx.debug >= 3:
-            log.debug("Raw packet: %s", to_sorted_string(event.packet))
-        self.cached_values.update(event.packet, event.packet['dateTime'])
-        if weewx.debug >= 3:
-            log.debug("Cached packet: %s",
-                      to_sorted_string(self.cached_values.get_packet(event.packet['dateTime'])))
-        self.loop_queue.put(
-            self.cached_values.get_packet(event.packet['dateTime']))
+        # Because a packet is emitted before the archive record, it may be
+        # this packet is a duplicate of the data sent with an archive record.
+        # This filter will hold it back until the archive record has been sent.
+        if self.cached_values.hit(event.packet):
+            self.loop_queue.put(event.packet)
 
     def new_archive_record(self, event):
         """Puts new archive records in the archive queue"""
